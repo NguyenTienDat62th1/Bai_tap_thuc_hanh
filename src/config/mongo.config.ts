@@ -1,5 +1,7 @@
-import { MongooseModuleOptions } from '@nestjs/mongoose';
+import { registerAs } from '@nestjs/config';
 
-export const mongoConfig = {
-  uri: 'mongodb://localhost:27017/nestdb',
-};
+export default registerAs('mongo', () => ({
+  uri: process.env.MONGO_URI || 'mongodb://localhost:27017/nestdb',
+  useNewUrlParser: true,
+  useUnifiedTopology: true,
+}));
