@@ -2,6 +2,7 @@ import { Controller, Get, Post, Body, UseGuards } from '@nestjs/common';
 import { ApiTags, ApiBody, ApiBearerAuth } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { CurrentUser } from '../auth/user.decorator';
+import type { CreateUserDto, JwtPayload, UserProfile } from '../user/interfaces/user.interface';
 
 @ApiTags('user')
 @Controller('user')
@@ -17,7 +18,7 @@ export class UserController {
     @Get('profile')
     @UseGuards(JwtAuthGuard)
     @ApiBearerAuth()
-    getProfile(@CurrentUser() user: any) {
+    getProfile(@CurrentUser() user: UserProfile) {
         return { message: 'This is your profile', user };
     }
     
@@ -27,7 +28,7 @@ export class UserController {
     @ApiBody({
         schema: { type: 'object', properties: { name: { type: 'string' } } },
     })
-    createUser(@Body() body: any, @CurrentUser() user: any) {
+    createUser(@Body() body: CreateUserDto, @CurrentUser() user: UserProfile) {
         return { message: `User ${body.name} created successfully by ${user.username}!` };
     }
 }

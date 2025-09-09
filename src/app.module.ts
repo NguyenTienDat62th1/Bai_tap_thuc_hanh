@@ -19,8 +19,8 @@ import mongoConfig from './config/mongo.config';
       imports: [ConfigModule],
       useFactory: async (configService: ConfigService) => ({
         uri: configService.get<string>('mongo.uri'),
-        useNewUrlParser: configService.get<boolean>('mongo.useNewUrlParser'),
-        useUnifiedTopology: configService.get<boolean>('mongo.useUnifiedTopology'),
+        // useNewUrlParser: configService.get<boolean>('mongo.useNewUrlParser'),
+        // useUnifiedTopology: configService.get<boolean>('mongo.useUnifiedTopology'),
       }),
       inject: [ConfigService],
     }),

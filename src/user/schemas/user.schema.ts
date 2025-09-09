@@ -31,6 +31,20 @@ export class User {
   password: string;
 
   @Prop({ 
+    type: String,
+    select: false,
+    default: null
+  })
+  resetToken?: string;
+
+  @Prop({
+    type: Date,
+    select: false,
+    default: null
+  })
+  resetTokenExpires?: Date;
+
+  @Prop({ 
     type: String, 
     trim: true,
     maxlength: 50,
@@ -87,9 +101,9 @@ export class User {
 export const UserSchema = SchemaFactory.createForClass(User);
 
 // Indexes
-UserSchema.index({ email: 1 }, { unique: true });
-UserSchema.index({ emailVerificationToken: 1 });
-UserSchema.index({ resetPasswordToken: 1 });
+//UserSchema.index({ email: 1 }, { unique: true });
+UserSchema.index({ emailVerificationToken: 1 }, { unique: false });
+UserSchema.index({ resetPasswordToken: 1 }, { unique: false });
 
 // Virtuals
 UserSchema.virtual('isAdmin').get(function() {

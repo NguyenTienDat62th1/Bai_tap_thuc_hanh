@@ -1,40 +1,41 @@
 import { Injectable, BadRequestException } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
-import * as bcrypt from 'bcryptjs';
-import * as nodemailer from 'nodemailer';
 import { User } from 'src/user/schemas/user.schema';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
+import { CommonHelpers } from 'src/common/helpers';
+import { MailService } from 'src/common/services/mail.service';
 
 @Injectable()
 export class AuthService {
-    constructor(
-      private readonly jwtService: JwtService,
-      @InjectModel(User.name) private readonly userModel: Model<User>,
-    ) {}
+  constructor(
+    private readonly jwtService: JwtService,
+    private readonly mailService: MailService,
+    @InjectModel(User.name) private readonly userModel: Model<User>,
+  ) {}
   
   // Hash password
-  async hashPassword(password: string) {
-    return await bcrypt.hash(password, 10);
-  }
+  // async hashPassword(password: string) {
+  //   return await bcrypt.hash(password, 10);
+  // }
 
-  async validatePassword(password: string, hash: string) {
-    return await bcrypt.compare(password, hash);
-  }
+  // async validatePassword(password: string, hash: string) {
+  //   return await bcrypt.compare(password, hash);
+  // }
 
-  // Register
+  // Đăng ký người dùng mới
   async register(registerDto: RegisterDto) {
     const { email, password } = registerDto;
 
-    // kiểm tra email tồn tại chưa
+    // Kiểm tra email tồn tại chưa
     const existingUser = await this.userModel.findOne({ email });
     if (existingUser) {
-      throw new BadRequestException('Email already registered');
+      throw new BadRequestException('Email đã được đăng ký');
     }
 
-    const hashedPassword = await this.hashPassword(password);
+    const hashedPassword = await CommonHelpers.hashPassword(password);
 
     const newUser = new this.userModel({
       email,
@@ -44,23 +45,23 @@ export class AuthService {
     await newUser.save();
 
     return {
-      message: 'User registered successfully',
+      message: 'Đăng ký thành công',
       user: { id: newUser._id, email: newUser.email },
     };
   }
 
-  // Login
+  // Đăng nhập
   async login(loginDto: LoginDto) {
     const { email, password } = loginDto;
 
     const user = await this.userModel.findOne({ email });
     if (!user) {
-      throw new BadRequestException('Invalid credentials');
+      throw new BadRequestException('Thông tin đăng nhập không chính xác');
     }
 
-    const isPasswordValid = await this.validatePassword(password, user.password);
+    const isPasswordValid = await CommonHelpers.validatePassword(password, user.password);
     if (!isPasswordValid) {
-      throw new BadRequestException('Invalid credentials');
+      throw new BadRequestException('Thông tin đăng nhập không chính xác');
     }
 
     const payload = { email: user.email, sub: user._id };
@@ -69,58 +70,37 @@ export class AuthService {
     };
   }
 
-  // Forgot password
+  // Quên mật khẩu
   async forgotPassword(email: string) {
     if (!email) {
-      throw new BadRequestException('Email is required');
+      throw new BadRequestException('Vui lòng nhập email');
+    }
+
+    if (!CommonHelpers.isValidEmail(email)) {
+      throw new BadRequestException('Email không hợp lệ');
     }
 
     // Kiểm tra email có tồn tại không
     const user = await this.userModel.findOne({ email });
     if (!user) {
-      throw new BadRequestException('Email not found');
+      // Không thông báo lỗi để tránh bị lộ thông tin
+      return { message: 'Nếu email tồn tại, chúng tôi đã gửi hướng dẫn đặt lại mật khẩu' };
     }
 
     // Tạo token reset password
-    const resetToken = Math.random().toString(36).substring(2);
+    const resetToken = CommonHelpers.generateRandomToken(32);
+    const resetUrl = `http://localhost:3000/reset-password?token=${resetToken}`;
     
+    // Lưu token vào database
+    user.resetToken = resetToken;
+    user.resetTokenExpires = new Date(Date.now() + 3600000); // Hết hạn sau 1 giờ
+    await user.save();
+
     // Gửi email reset password
-    await this.sendResetPasswordMail(email, resetToken);
+    await this.mailService.sendResetPasswordEmail(email, resetToken, resetUrl);
 
     return {
-      message: 'Reset password email sent successfully',
-      token: resetToken, // Chỉ để debug, có thể bỏ sau này
+      message: 'Nếu email tồn tại, chúng tôi đã gửi hướng dẫn đặt lại mật khẩu',
     };
-  }
-
-  // Gửi email reset password
-  async sendResetPasswordMail(email: string, token: string) {
-    // Thực hiện gửi email ở đây
-    // Đây là ví dụ đơn giản, bạn cần cấu hình nodemailer để gửi email thật
-    console.log(`Sending reset password email to ${email} with token: ${token}`);
-    
-    // TODO: Implement actual email sending logic
-    // const transporter = nodemailer.createTransport({...});
-    // await transporter.sendMail({...});
-  }
-
-  async sendResetPasswordMailOld(email: string, token: string) {
-    if (!email) {
-      return {
-        message: 'Email is required',
-      };
-    }
-    const transporter = nodemailer.createTransport({
-      host: 'localhost',
-      port: 1025,
-      secure: false,
-    });
-
-    await transporter.sendMail({
-      from: 'noreply@example.com',
-      to: email,
-      subject: 'Reset Password',
-      text: `Click here to reset password: http://localhost:3000/reset?token=${token}`,
-    });
   }
 }
