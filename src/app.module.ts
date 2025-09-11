@@ -1,41 +1,74 @@
 import { Module } from '@nestjs/common';
+import { CoreModule } from './core/core.module';
+import { ConfigModule, ConfigService } from '@nestjs/config';
+import { APP_GUARD } from '@nestjs/core';
+import { MongooseModule } from '@nestjs/mongoose';
+import { MailerModule } from '@nestjs-modules/mailer';
+import { join } from 'path';
+
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
-import { MongooseModule } from '@nestjs/mongoose';
-import { UserController } from './user/user.controller';
 import { AuthModule } from './auth/auth.module';
-import { JwtModule } from '@nestjs/jwt';
-import { ConfigModule, ConfigService } from '@nestjs/config';
-import mongoConfig from './config/mongo.config';
+import { UserModule } from './user/user.module';
+import { SharedModule } from './shared/shared.module';
+import { JwtAuthGuard } from './auth/guards/jwt-auth.guard';
+import { RolesGuard } from './auth/guards/roles.guard';
+import { ConfigModule as AppConfigModule } from './config/config.module';
+import { databaseConfig } from './config/database.config';
 
 @Module({
   imports: [
-    ConfigModule.forRoot({
-      isGlobal: true,
-      envFilePath: '.env',
-      load: [mongoConfig],
-    }),
+    CoreModule,
+    AppConfigModule,
     MongooseModule.forRootAsync({
       imports: [ConfigModule],
       useFactory: async (configService: ConfigService) => ({
-        uri: configService.get<string>('mongo.uri'),
-        // useNewUrlParser: configService.get<boolean>('mongo.useNewUrlParser'),
-        // useUnifiedTopology: configService.get<boolean>('mongo.useUnifiedTopology'),
+        uri: configService.get<string>('database.uri'),
+        useNewUrlParser: true,
+        useUnifiedTopology: true,
+      }),
+      inject: [ConfigService],
+    }),
+    MailerModule.forRootAsync({
+      imports: [ConfigModule],
+      useFactory: async (configService: ConfigService) => ({
+      transport: {
+        host: configService.get('mail.host'),
+        port: configService.get('mail.port'),
+        secure: false,
+        auth: {
+          user: configService.get('mail.user'),
+          pass: configService.get('mail.password'),
+        },
+      },
+      defaults: {
+        from: `"${configService.get('mail.defaults.fromName', 'NestJS App')}" <${configService.get('mail.defaults.from', 'noreply@example.com')}>`,
+      },
+      template: {
+        dir: join(__dirname, '../shared/mail/templates'),
+        adapter: new (require('@nestjs-modules/mailer/dist/adapters/handlebars.adapter').HandlebarsAdapter)(),
+        options: {
+          strict: true,
+        },
+      },
       }),
       inject: [ConfigService],
     }),
     AuthModule,
-    JwtModule.registerAsync({
-      imports: [ConfigModule],
-      useFactory: async (configService: ConfigService) => ({
-        secret: configService.get<string>('JWT_SECRET'),
-        signOptions: { expiresIn: configService.get<string>('JWT_EXPIRES_IN') },
-      }),
-      inject: [ConfigService],
-      global: true,
-    }),
+    UserModule,
+    SharedModule,
   ],
-  controllers: [AppController, UserController],
-  providers: [AppService],
+  controllers: [AppController],
+  providers: [
+    AppService,
+    {
+      provide: APP_GUARD,
+      useClass: JwtAuthGuard,
+    },
+    {
+      provide: APP_GUARD,
+      useClass: RolesGuard,
+    },
+  ],
 })
 export class AppModule {}

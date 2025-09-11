@@ -1,111 +1,106 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
-import { Document, Types } from 'mongoose';
+import { Document, Schema as MongooseSchema, HydratedDocument } from 'mongoose';
+import { Role } from '../../auth/enums/role.enum';
 
-export type UserDocument = User & Document;
+export type UserDocument = HydratedDocument<User> & {
+  _id: string;
+  password: string;
+  refreshToken?: string;
+  emailVerificationToken?: string;
+  passwordResetToken?: string;
+  passwordResetExpires?: Date;
+  emailVerificationExpires?: Date;
+  resetToken?: string;
+  resetTokenExpires?: Date;
+};
 
 @Schema({
-  timestamps: true, // Tự động thêm createdAt và updatedAt
-  toJSON: { virtuals: true },
-  toObject: { virtuals: true },
+  timestamps: true,
+  toJSON: {
+    transform: function (doc, ret) {
+      // Create a new object with the properties we want to keep
+      const { password, refreshToken, emailVerificationToken, passwordResetToken, resetToken, __v, ...safeUser } = ret as unknown as UserDocument & { __v: number };
+      return safeUser;
+    },
+  },
 })
 export class User {
-  @Prop({ type: Types.ObjectId, auto: true })
-  _id: Types.ObjectId;
+  @Prop({ type: MongooseSchema.Types.ObjectId, auto: true })
+  _id: string;
 
-  @Prop({ 
-    type: String, 
-    required: true, 
-    unique: true,
-    trim: true,
-    lowercase: true,
-    match: /^[a-zA-Z0-9._-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,4}$/,
-  })
+  @Prop({ required: true, unique: true, lowercase: true, trim: true })
   email: string;
 
-  @Prop({ 
-    type: String, 
-    required: true,
-    minlength: 6,
-    select: false, // Không trả về password khi query
-  })
+  @Prop({ required: true })
   password: string;
 
-  @Prop({ 
-    type: String,
-    select: false,
-    default: null
-  })
-  resetToken?: string;
+  @Prop({ required: true })
+  firstName: string;
 
-  @Prop({
-    type: Date,
-    select: false,
-    default: null
-  })
-  resetTokenExpires?: Date;
+  @Prop()
+  lastName?: string;
 
-  @Prop({ 
-    type: String, 
-    trim: true,
-    maxlength: 50,
-  })
-  fullName: string;
-
-  @Prop({ 
-    type: String,
-    enum: ['user', 'admin'],
-    default: 'user',
-  })
-  role: string;
-
-  @Prop({ 
-    type: String,
-    default: 'https://i.pravatar.cc/300',
-  })
-  avatar: string;
-
-  @Prop({ 
-    type: Boolean,
-    default: false,
-  })
+  @Prop({ default: false })
   isEmailVerified: boolean;
 
-  @Prop({ 
-    type: String,
-    select: false,
-  })
-  emailVerificationToken: string;
+  @Prop({ default: true })
+  isActive: boolean;
 
-  @Prop({
-    type: Date,
-  })
-  emailVerificationExpires: Date;
+  @Prop({ type: [String], enum: Role, default: [Role.USER] })
+  roles: Role[];
 
-  @Prop({
-    type: String,
-    select: false,
-  })
-  resetPasswordToken: string;
+  @Prop()
+  lastLogin?: Date;
 
-  @Prop({
-    type: Date,
-  })
-  resetPasswordExpire: Date;
+  @Prop()
+  passwordChangedAt?: Date;
 
-  // Virtuals
-  id: string;
-  createdAt: Date;
-  updatedAt: Date;
+  @Prop()
+  refreshToken?: string;
+
+  @Prop()
+  emailVerificationToken?: string;
+
+  @Prop()
+  emailVerificationExpires?: Date;
+
+  @Prop()
+  passwordResetToken?: string;
+
+  @Prop()
+  passwordResetExpires?: Date;
+
+  @Prop()
+  resetToken?: string;
+
+  @Prop()
+  resetTokenExpires?: Date;
+
+  // Virtual for fullName
+  get fullName(): string {
+    return `${this.firstName} ${this.lastName || ''}`.trim();
+  }
+
+  // Method to check if password was changed after a certain timestamp
+  changedPasswordAfter(JWTTimestamp: number): boolean {
+    if (this.passwordChangedAt) {
+      const changedTimestamp = Math.floor(this.passwordChangedAt.getTime() / 1000);
+      return JWTTimestamp < changedTimestamp;
+    }
+    return false;
+  }
+
+  // Method to check if the password reset token is expired
+  isResetTokenExpired(): boolean {
+    return !!(this.resetTokenExpires && new Date(this.resetTokenExpires) < new Date());
+  }
 }
 
 export const UserSchema = SchemaFactory.createForClass(User);
 
 // Indexes
 //UserSchema.index({ email: 1 }, { unique: true });
-UserSchema.index({ emailVerificationToken: 1 }, { unique: false });
-UserSchema.index({ resetPasswordToken: 1 }, { unique: false });
-
-// Virtuals
-UserSchema.virtual('isAdmin').get(function() {
-  return this.role === 'admin';
-});
+UserSchema.index({ emailVerificationToken: 1 });
+UserSchema.index({ passwordResetToken: 1 });
+UserSchema.index({ resetToken: 1 });
+UserSchema.index({ resetTokenExpires: 1 }, { expireAfterSeconds: 0 }); // TTL index for auto-expiry

@@ -1,33 +1,8 @@
-import { 
-  IsEmail, 
-  IsEnum, 
-  IsNotEmpty, 
-  IsOptional, 
-  IsString, 
-  Matches, 
-  MinLength,
-  Validate,
-  ValidatorConstraint,
-  ValidatorConstraintInterface,
-  ValidationArguments
-} from 'class-validator';
+import { IsEmail, IsEnum, IsNotEmpty, IsOptional, IsString, Matches, MinLength } from 'class-validator';
 import { ApiProperty } from '@nestjs/swagger';
-import { Role } from '../enums/role.enum';
+import { Role } from '../../auth/enums/role.enum';
 
-@ValidatorConstraint({ name: 'isMatchingPassword', async: false })
-export class IsMatchingPasswordConstraint implements ValidatorConstraintInterface {
-  validate(value: any, args: ValidationArguments) {
-    const [relatedPropertyName] = args.constraints;
-    const relatedValue = (args.object as any)[relatedPropertyName];
-    return value === relatedValue;
-  }
-
-  defaultMessage(args: ValidationArguments) {
-    return 'Passwords do not match';
-  }
-}
-
-export class RegisterDto {
+export class CreateUserDto {
   @ApiProperty({
     example: 'user@example.com',
     description: 'The email of the user',
@@ -68,17 +43,6 @@ export class RegisterDto {
   password: string;
 
   @ApiProperty({
-    example: 'your-secure-password',
-    description: 'Confirm password must match the password',
-  })
-  @IsString({ message: 'Confirm password must be a string' })
-  @IsNotEmpty({ message: 'Please confirm your password' })
-  @Validate(IsMatchingPasswordConstraint, ['password'],{
-    message: 'Passwords do not match',
-  })
-  confirmPassword: string;
-
-  @ApiProperty({
     enum: Role,
     enumName: 'Role',
     default: Role.USER,
@@ -88,10 +52,4 @@ export class RegisterDto {
   @IsEnum(Role, { message: 'Invalid role' })
   @IsOptional()
   role?: Role;
-
-  // Custom validator to check if passwords match
-  static validate(registerDto: RegisterDto): boolean {
-    const { password, confirmPassword } = registerDto;
-    return password === confirmPassword;
-  }
 }

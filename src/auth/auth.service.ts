@@ -1,106 +1,213 @@
-import { Injectable, BadRequestException } from '@nestjs/common';
+import { 
+  Injectable, 
+  UnauthorizedException,
+  ConflictException, 
+  BadRequestException, 
+  InternalServerErrorException 
+} from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
-import { User } from 'src/user/schemas/user.schema';
-import { InjectModel } from '@nestjs/mongoose';
-import { Model } from 'mongoose';
+import { ConfigService } from '@nestjs/config';
+import * as bcrypt from 'bcrypt';
+import { JwtConfig } from '../config/jwt.config';
+import { JwtPayload } from './interfaces';
+import { TokenPair } from './interfaces/token-pair.interface';
+import { UserService } from '../user/user.service';
+import { User } from '../user/schemas/user.schema';
 import { RegisterDto } from './dto/register.dto';
-import { LoginDto } from './dto/login.dto';
-import { CommonHelpers } from 'src/common/helpers';
-import { MailService } from 'src/common/services/mail.service';
+import { ForgotPasswordDto } from './dto/forgot-password.dto';
+import { ResetPasswordDto } from './dto/reset-password.dto';
+import { Role } from './enums/role.enum';
+import { MailService } from '../shared/mail/mail.service';
 
 @Injectable()
 export class AuthService {
   constructor(
+    private readonly userService: UserService,
     private readonly jwtService: JwtService,
+    private readonly configService: ConfigService,
     private readonly mailService: MailService,
-    @InjectModel(User.name) private readonly userModel: Model<User>,
   ) {}
-  
-  // Hash password
-  // async hashPassword(password: string) {
-  //   return await bcrypt.hash(password, 10);
-  // }
 
-  // async validatePassword(password: string, hash: string) {
-  //   return await bcrypt.compare(password, hash);
-  // }
-
-  // Đăng ký người dùng mới
-  async register(registerDto: RegisterDto) {
-    const { email, password } = registerDto;
-
-    // Kiểm tra email tồn tại chưa
-    const existingUser = await this.userModel.findOne({ email });
-    if (existingUser) {
-      throw new BadRequestException('Email đã được đăng ký');
-    }
-
-    const hashedPassword = await CommonHelpers.hashPassword(password);
-
-    const newUser = new this.userModel({
-      email,
-      password: hashedPassword,
-    });
-
-    await newUser.save();
-
-    return {
-      message: 'Đăng ký thành công',
-      user: { id: newUser._id, email: newUser.email },
-    };
-  }
-
-  // Đăng nhập
-  async login(loginDto: LoginDto) {
-    const { email, password } = loginDto;
-
-    const user = await this.userModel.findOne({ email });
-    if (!user) {
-      throw new BadRequestException('Thông tin đăng nhập không chính xác');
-    }
-
-    const isPasswordValid = await CommonHelpers.validatePassword(password, user.password);
-    if (!isPasswordValid) {
-      throw new BadRequestException('Thông tin đăng nhập không chính xác');
-    }
-
-    const payload = { email: user.email, sub: user._id };
-    return {
-      access_token: this.jwtService.sign(payload),
-    };
-  }
-
-  // Quên mật khẩu
-  async forgotPassword(email: string) {
-    if (!email) {
-      throw new BadRequestException('Vui lòng nhập email');
-    }
-
-    if (!CommonHelpers.isValidEmail(email)) {
-      throw new BadRequestException('Email không hợp lệ');
-    }
-
-    // Kiểm tra email có tồn tại không
-    const user = await this.userModel.findOne({ email });
-    if (!user) {
-      // Không thông báo lỗi để tránh bị lộ thông tin
-      return { message: 'Nếu email tồn tại, chúng tôi đã gửi hướng dẫn đặt lại mật khẩu' };
-    }
-
-    // Tạo token reset password
-    const resetToken = CommonHelpers.generateRandomToken(32);
-    const resetUrl = `http://localhost:3000/reset-password?token=${resetToken}`;
+  async validateUser(email: string, password: string): Promise<any> {
+    const user = await this.userService.findByEmail(email);
     
-    // Lưu token vào database
-    user.resetToken = resetToken;
-    user.resetTokenExpires = new Date(Date.now() + 3600000); // Hết hạn sau 1 giờ
-    await user.save();
+    if (user && (await bcrypt.compare(password, user.password))) {
+      const { password, ...result } = user.toObject();
+      return result;
+    }
+    return null;
+  }
 
-    // Gửi email reset password
-    await this.mailService.sendResetPasswordEmail(email, resetToken, resetUrl);
+  async login(user: any): Promise<TokenPair> {
+    const payload: JwtPayload = {
+      sub: user._id,
+      email: user.email,
+      roles: user.roles || [],
+      type: 'access',
+    };
+
+    const tokens = await this.generateTokens(payload);
+    
+    // Update last login time
+    await this.userService.updateLastLogin(user._id);
+    
+    return tokens;
+  }
+
+  async refreshToken(user: any): Promise<TokenPair> {
+    const payload: JwtPayload = {
+      sub: user.id,
+      email: user.email,
+      roles: user.roles || [],
+      type: 'access',
+    };
+
+    return this.generateTokens(payload);
+  }
+
+  private async generateTokens(payload: JwtPayload): Promise<TokenPair> {
+    const jwtConfig = this.configService.get<JwtConfig>('jwt');
+
+    if (!jwtConfig) {
+      throw new Error('JWT configuration not found');
+    }
+    
+    const [accessToken, refreshToken] = await Promise.all([
+      this.jwtService.signAsync(
+        { ...payload, type: 'access' },
+        {
+          secret: jwtConfig.secret,
+          expiresIn: jwtConfig.accessExpiresIn,
+        },
+      ),
+      this.jwtService.signAsync(
+        { ...payload, type: 'refresh' },
+        {
+          secret: jwtConfig.refreshSecret,
+          expiresIn: jwtConfig.refreshExpiresIn,
+        },
+      ),
+    ]);
 
     return {
-      message: 'Nếu email tồn tại, chúng tôi đã gửi hướng dẫn đặt lại mật khẩu',
+      accessToken,
+      refreshToken,
+      expiresIn: jwtConfig.accessExpiresIn,
+      tokenType: 'Bearer',
     };
+  }
+
+  async register(registerDto: RegisterDto): Promise<User> {
+    if (!registerDto.email || !registerDto.password) {
+      throw new Error('Email and password are required');
+    }
+
+    // Check if user with email already exists
+    const existingUser = await this.userService.findByEmail(registerDto.email);
+    if (existingUser) {
+      throw new ConflictException('Email already in use');
+    }
+
+    // Hash password
+    const hashedPassword = await bcrypt.hash(registerDto.password, 10);
+    
+    // Map RegisterDto to User document
+    const userData = {
+      email: registerDto.email,
+      password: hashedPassword,
+      firstName: registerDto.firstName,
+      lastName: registerDto.lastName,
+      roles: [Role.USER],
+      isActive: true,
+      isEmailVerified: false,
+    };
+
+    // Create user with required fields
+    const user = await this.userService.create(userData);
+
+    // Generate verification token
+    const verificationToken = this.jwtService.sign(
+      { 
+        sub: user._id, 
+        email: user.email, 
+        type: 'verification' 
+      },
+      { 
+        secret: this.configService.get<string>('jwt.secret') || 'fallback_secret',
+        expiresIn: '1d',
+      },
+    );
+
+    // TODO: Send verification email
+    // await this.mailService.sendVerificationEmail(user.email, verificationToken);
+
+    return user;
+  }
+
+  async forgotPassword(forgotPasswordDto: ForgotPasswordDto): Promise<{ message: string }> {
+    const user = await this.userService.findByEmail(forgotPasswordDto.email);
+    
+    if (!user) {
+      // For security reasons, we don't want to reveal if the email exists or not
+      return { message: 'If the email exists, a reset token will be sent' };
+    }
+
+    // Generate reset token (6 digits)
+    const resetToken = Math.floor(100000 + Math.random() * 900000).toString();
+    const resetTokenExpires = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes
+    
+    // Save reset token to user
+    await this.userService.setPasswordResetToken(user._id, resetToken, resetTokenExpires);
+
+    // Log token to console for testing
+    console.log('=== RESET PASSWORD TOKEN ===');
+    console.log(`Email: ${user.email}`);
+    console.log(`Token: ${resetToken}`);
+    console.log('===========================');
+
+    // Send email with reset token
+    try {
+      const resetUrl = `${this.configService.get('app.frontendUrl')}/reset-password?token=${resetToken}`;
+      
+      await this.mailService.sendMail(
+        user.email,
+        'Your Password Reset Token',
+        'reset-token',
+        {
+          name: user.firstName || user.email.split('@')[0],
+          resetUrl,
+          token: resetToken,
+          expiresIn: '10 minutes',
+          appName: this.configService.get('app.name', 'Our App'),
+          supportEmail: this.configService.get('mail.supportEmail', 'support@example.com'),
+        }
+      );
+      
+      return { message: 'If the email exists, a reset token will be sent' };
+    } catch (error) {
+      console.error('Failed to send email:', error);
+      // Still return success to user even if email fails (security)
+      return { message: 'If the email exists, a reset token will be sent' };
+    }
+  }
+
+  async resetPassword(resetPasswordDto: ResetPasswordDto): Promise<void> {
+    // Find user by reset token and check if it's not expired
+    const user = await this.userService.findByResetToken(resetPasswordDto.token);
+    
+    if (!user) {
+      throw new BadRequestException('Invalid or expired reset token');
+    }
+
+    // Check if passwords match
+    if (resetPasswordDto.newPassword !== resetPasswordDto.confirmPassword) {
+      throw new BadRequestException('Passwords do not match');
+    }
+
+    // Update password
+    await this.userService.updatePassword(user._id, resetPasswordDto.newPassword);
+    
+    // Clear reset token
+    await this.userService.clearResetToken(user._id);
   }
 }
