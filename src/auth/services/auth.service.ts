@@ -97,7 +97,7 @@ export class AuthService {
     await user.save();
 
     // Gửi email reset password
-    await this.mailService.sendResetPasswordEmail(email, resetToken, resetUrl);
+    await this.mailService.sendPasswordResetEmail(email, resetToken, resetUrl);
 
     return {
       message: 'Nếu email tồn tại, chúng tôi đã gửi hướng dẫn đặt lại mật khẩu',

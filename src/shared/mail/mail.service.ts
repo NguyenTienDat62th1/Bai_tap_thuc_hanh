@@ -97,30 +97,27 @@ export class MailService {
     );
   }
 
-  async sendPasswordResetEmail(
-    email: string,
-    name: string,
-    token: string,
-  ): Promise<SentMessageInfo> {
-    const appName = this.configService.get<string>('app.name', 'Our App');
-    const frontendUrl = this.configService.get<string>('app.frontendUrl', 'http://localhost:3000');
-    const resetUrl = `${frontendUrl}/reset-password?token=${token}`;
-    const supportEmail = this.configService.get('mail.supportEmail', 'support@example.com');
-
-    return this.sendMail(
-      email,
-      `Reset Your Password - ${appName}`,
-      'reset-token',
-      {
-        name,
-        resetUrl,
-        token,
-        expiresIn: '10 minutes',
-        appName,
-        supportEmail
-      },
-      this.configService.get('mail.defaults.from', 'noreply@example.com')
-    );
+  async sendPasswordResetEmail(email: string, name: string, token: string): Promise<SentMessageInfo> {
+    try {
+      const frontendUrl = this.configService.get<string>('FRONTEND_URL');
+      const resetUrl = `${frontendUrl}/reset-password?token=${token}`;
+      
+      await this.sendMail(
+        email,
+        'Đặt lại mật khẩu',
+        'reset-password',
+        {
+          name,
+          resetUrl,
+          resetToken: token,
+          expiresIn: '15 phút',
+          appName: this.configService.get<string>('APP_NAME', 'Ứng dụng')
+        }
+      );
+    } catch (error) {
+      this.logger.error(`Failed to send password reset email: ${error.message}`, error.stack);
+      throw error;
+    }
   }
 
   async sendWelcomeEmail(

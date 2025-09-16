@@ -12,17 +12,29 @@ export type UserDocument = HydratedDocument<User> & {
   emailVerificationExpires?: Date;
   resetToken?: string;
   resetTokenExpires?: Date;
+  resetPasswordToken?: ResetPasswordToken;
 };
+interface ResetPasswordToken {
+  token: string;
+  expiresAt: Date;
+  used: boolean;
+  createdAt: Date;
+}
 
 @Schema({
   timestamps: true,
   toJSON: {
     transform: function (doc, ret) {
       // Create a new object with the properties we want to keep
-      const { password, refreshToken, emailVerificationToken, passwordResetToken, resetToken, __v, ...safeUser } = ret as unknown as UserDocument & { __v: number };
+      const { password, refreshToken, emailVerificationToken, passwordResetToken, resetToken, resetPasswordToken, __v, ...safeUser } = ret as unknown as UserDocument & { __v: number };
       return safeUser;
     },
+    virtuals: true,
   },
+  toObject: {
+    virtuals: true,
+  },
+  collection: 'users',
 })
 export class User {
   @Prop({ type: MongooseSchema.Types.ObjectId, auto: true })
@@ -76,6 +88,24 @@ export class User {
   @Prop()
   resetTokenExpires?: Date;
 
+  // @Prop()
+  // resetPasswordToken: {
+  //   token: string;
+  //   expiresAt: Date;
+  //   used: boolean;
+  //   createdAt: Date;
+  // };
+
+  @Prop({
+    type: {
+      token: { type: String, default: null },
+      expiresAt: { type: Date, default: null },
+      used: { type: Boolean, default: false },
+      createdAt: { type: Date, default: Date.now },
+    },
+    _id: false,
+  })
+  resetPasswordToken?: ResetPasswordToken;
   // Virtual for fullName
   get fullName(): string {
     return `${this.firstName} ${this.lastName || ''}`.trim();
@@ -104,3 +134,22 @@ UserSchema.index({ emailVerificationToken: 1 });
 UserSchema.index({ passwordResetToken: 1 });
 UserSchema.index({ resetToken: 1 });
 UserSchema.index({ resetTokenExpires: 1 }, { expireAfterSeconds: 0 }); // TTL index for auto-expiry
+UserSchema.index(
+  { 'resetPasswordToken.expiresAt': 1 },
+  { expireAfterSeconds: 0, partialFilterExpression: { 
+    'resetPasswordToken.used': false,
+    'resetPasswordToken.expiresAt': { $exists: true }
+  } }
+);
+UserSchema.index(
+  { 'resetPasswordToken.token': 1 },
+  { 
+    unique: true,
+    partialFilterExpression: { 
+      'resetPasswordToken.token': { $exists: true },
+      'resetPasswordToken.used': false
+    },
+    sparse: true
+  }
+);
+export const USER_MODEL = 'User';

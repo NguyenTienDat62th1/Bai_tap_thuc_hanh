@@ -145,69 +145,113 @@ export class AuthService {
   }
 
   async forgotPassword(forgotPasswordDto: ForgotPasswordDto): Promise<{ message: string }> {
-    const user = await this.userService.findByEmail(forgotPasswordDto.email);
-    
-    if (!user) {
-      // For security reasons, we don't want to reveal if the email exists or not
-      return { message: 'If the email exists, a reset token will be sent' };
-    }
-
-    // Generate reset token (6 digits)
-    const resetToken = Math.floor(100000 + Math.random() * 900000).toString();
-    const resetTokenExpires = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes
-    
-    // Save reset token to user
-    await this.userService.setPasswordResetToken(user._id, resetToken, resetTokenExpires);
-
-    // Log token to console for testing
-    console.log('=== RESET PASSWORD TOKEN ===');
-    console.log(`Email: ${user.email}`);
-    console.log(`Token: ${resetToken}`);
-    console.log('===========================');
-
-    // Send email with reset token
     try {
-      const resetUrl = `${this.configService.get('app.frontendUrl')}/reset-password?token=${resetToken}`;
+      const user = await this.userService.findByEmail(forgotPasswordDto.email);
       
-      await this.mailService.sendMail(
-        user.email,
-        'Your Password Reset Token',
-        'reset-token',
-        {
-          name: user.firstName || user.email.split('@')[0],
-          resetUrl,
-          token: resetToken,
-          expiresIn: '10 minutes',
-          appName: this.configService.get('app.name', 'Our App'),
-          supportEmail: this.configService.get('mail.supportEmail', 'support@example.com'),
+      if (user) {
+        // Generate reset token with user ID and expiration
+        const resetToken = this.jwtService.sign(
+          { 
+            sub: user._id,
+            email: user.email,
+            type: 'reset',
+            iat: Math.floor(Date.now() / 1000),
+          },
+          { 
+            secret: this.configService.get<string>('JWT_RESETPASSWORD_KEY')||
+            this.configService.get<string>('jwt.secret'),
+            expiresIn: '15m', // Token expires in 15 minutes
+          }
+        );
+
+        const frontendUrl = this.configService.get<string>('FRONTEND_URL');
+
+        // Lưu thông tin reset token
+        await this.userService.setResetToken(
+          user._id,
+          resetToken,
+          new Date(Date.now() + 15 * 60 * 1000), // 15 minutes from now
+        );
+        // Send email with reset token
+        try {
+          await this.mailService.sendPasswordResetEmail(
+            user.email,
+            user.firstName || 'User',
+            resetToken,
+          );
+        } catch (emailError) {
+          console.error('Gửi email thất bại:', emailError);
+          // Don't fail the request if email sending fails
         }
-      );
+      }
       
-      return { message: 'If the email exists, a reset token will be sent' };
+      // Always return success to prevent email enumeration
+      return { message: 'Nếu email tồn tại trong hệ thống, bạn sẽ nhận được liên kết đặt lại mật khẩu' };
     } catch (error) {
-      console.error('Failed to send email:', error);
-      // Still return success to user even if email fails (security)
-      return { message: 'If the email exists, a reset token will be sent' };
+      console.error('Error in forgot password:', error);
+      throw new InternalServerErrorException('Đã xảy ra lỗi khi xử lý yêu cầu. Vui lòng thử lại sau.');
     }
   }
 
   async resetPassword(resetPasswordDto: ResetPasswordDto): Promise<void> {
-    // Find user by reset token and check if it's not expired
-    const user = await this.userService.findByResetToken(resetPasswordDto.token);
-    
-    if (!user) {
-      throw new BadRequestException('Invalid or expired reset token');
-    }
-
-    // Check if passwords match
+    // 1. Kiểm tra mật khẩu mới và xác nhận mật khẩu khớp nhau
     if (resetPasswordDto.newPassword !== resetPasswordDto.confirmPassword) {
-      throw new BadRequestException('Passwords do not match');
+      throw new BadRequestException('Mật khẩu xác nhận không khớp');
     }
 
-    // Update password
-    await this.userService.updatePassword(user._id, resetPasswordDto.newPassword);
-    
-    // Clear reset token
-    await this.userService.clearResetToken(user._id);
+    let payload;
+    try {
+      // 2. Xác minh và giải mã token với secret key riêng cho reset password
+      payload = this.jwtService.verify(resetPasswordDto.token, {
+        secret: this.configService.get<string>('JWT_RESETPASSWORD_KEY') || this.configService.get<string>('jwt.secret')
+      });
+      
+      // 3. Kiểm tra loại token
+      if (payload.type !== 'reset') {
+        throw new BadRequestException('Loại token không hợp lệ');
+      }
+
+      // 4. Kiểm tra thời gian hết hạn
+      const now = Math.floor(Date.now() / 1000);
+      if (payload.exp && payload.exp < now) {
+        throw new BadRequestException('Token đã hết hạn');
+      }
+
+      // 5. Tìm người dùng từ token
+      const user = await this.userService.findById(payload.sub);
+      
+      if (!user) {
+        throw new BadRequestException('Không tìm thấy người dùng');
+      }
+
+      // 6. Kiểm tra email trong token có khớp với email của người dùng không
+      if (user.email !== payload.email) {
+        throw new BadRequestException('Thông tin xác thực không hợp lệ');
+      }
+
+      // 7. Kiểm tra token đã được sử dụng chưa (nếu có lưu trong DB)
+      if (user.resetPasswordToken && user.resetPasswordToken.used) {
+        throw new BadRequestException('Token đã được sử dụng');
+      }
+
+      // 8. Cập nhật mật khẩu mới
+      await this.userService.updatePassword(user._id, resetPasswordDto.newPassword);
+      
+      // 9. Đánh dấu token đã sử dụng (one-time use)
+      await this.userService.markResetTokenAsUsed(user._id, resetPasswordDto.token);
+      
+    } catch (error) {
+      // Xử lý các lỗi cụ thể
+      if (error.name === 'TokenExpiredError') {
+        throw new BadRequestException('Token đã hết hạn. Vui lòng yêu cầu gửi lại email đặt lại mật khẩu');
+      } else if (error.name === 'JsonWebTokenError') {
+        throw new BadRequestException('Token không hợp lệ');
+      } else if (error instanceof BadRequestException) {
+        throw error;
+      }
+      
+      console.error('Lỗi khi đặt lại mật khẩu:', error);
+      throw new BadRequestException('Đã xảy ra lỗi khi đặt lại mật khẩu. Vui lòng thử lại sau.');
+    }
   }
 }

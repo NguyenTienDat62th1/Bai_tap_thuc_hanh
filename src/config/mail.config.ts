@@ -5,12 +5,12 @@ import { Transform } from 'class-transformer';
 class MailConfigVariables {
   @IsString()
   @IsOptional()
-  MAIL_HOST = 'smtp.example.com';
+  MAIL_HOST = 'localhost';
 
   @IsNumber()
   @Transform(({ value }) => parseInt(value, 10))
   @IsOptional()
-  MAIL_PORT = 587;
+  MAIL_PORT = 1025;
 
   @IsBoolean()
   @Transform(({ value }) => value === 'true')
@@ -31,7 +31,7 @@ class MailConfigVariables {
 
   @IsString()
   @IsOptional()
-  MAIL_NAME = 'NestJS App';
+  MAIL_NAME = 'Test';
 
   @IsBoolean()
   @Transform(({ value }) => value === 'true')

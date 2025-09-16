@@ -181,4 +181,57 @@ export class UserService {
 
     return true;
   }
+
+  /**
+   * Lưu thông tin reset token vào database
+   */
+  async setResetToken(
+    userId: string,
+    token: string,
+    expiresAt: Date
+  ): Promise<void> {
+    await this.userModel.findByIdAndUpdate(
+      userId,
+      {
+        resetPasswordToken: {
+          token,
+          expiresAt,
+          used: false
+        }
+      },
+      { new: true }
+    );
+  }
+
+  /**
+   * Đánh dấu token đã được sử dụng
+   */
+  async markResetTokenAsUsed(userId: string, token: string): Promise<void> {
+    await this.userModel.findOneAndUpdate(
+      {
+        _id: userId,
+        'resetPasswordToken.token': token,
+        'resetPasswordToken.used': false,
+        'resetPasswordToken.expiresAt': { $gt: new Date() }
+      },
+      {
+        $set: { 'resetPasswordToken.used': true },
+        $unset: { resetPasswordToken: 1 } // Xóa token sau khi đã sử dụng
+      }
+    );
+  }
+
+  /**
+   * Kiểm tra token có hợp lệ không
+   */
+  async validateResetToken(userId: string, token: string): Promise<boolean> {
+    const user = await this.userModel.findOne({
+      _id: userId,
+      'resetPasswordToken.token': token,
+      'resetPasswordToken.used': false,
+      'resetPasswordToken.expiresAt': { $gt: new Date() }
+    });
+
+    return !!user;
+  }
 }
